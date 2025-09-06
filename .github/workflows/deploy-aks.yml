@@ -56,17 +56,11 @@ jobs:
         ruby-version: 3.4.5
         bundler-cache: true
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-        cache: 'npm'
-        cache-dependency-path: package-lock.json
+    # Removed Node.js setup as this Rails app uses importmap
 
     - name: Install dependencies
       run: |
         bundle install --jobs 4 --retry 3
-        npm ci
 
     - name: Setup test database
       env:
@@ -88,7 +82,6 @@ jobs:
     - name: Run security audit
       run: |
         bundle exec bundler-audit --update
-        npm audit --audit-level high
 
   # Build and Deploy job (only for main branch)
   deploy:
