@@ -78,6 +78,14 @@ jobs:
       run: |
         bundle install --jobs 4 --retry 3
 
+    - name: Setup Chrome for system tests
+      run: |
+        # Verify Chrome is available
+        google-chrome --version || chromium-browser --version
+        
+        # Set display for headless testing
+        export DISPLAY=:99
+
     - name: Setup test database
       env:
         CI: true
@@ -94,6 +102,7 @@ jobs:
         RAILS_ENV: test
         DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_rails_71_app_test
         REDIS_URL: redis://localhost:6379/0
+        DISPLAY: ":99"
         # ELASTICSEARCH_URL: http://localhost:9200
       run: |
         bin/rails test
