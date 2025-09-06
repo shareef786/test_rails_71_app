@@ -1,0 +1,362 @@
+name: Deploy to AKS
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+    types: [ closed ]
+
+env:
+  RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP || 'rails-app-rg' }}
+  CLUSTER_NAME: ${{ secrets.AZURE_CLUSTER_NAME || 'rails-app-aks' }}
+  LOCATION: ${{ secrets.AZURE_LOCATION || 'East US' }}
+  ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
+  IMAGE_TAG: ${{ github.sha }}
+  RAILS_ENV: production
+
+jobs:
+  # Test job for pull requests and main branch
+  test:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_rails_71_app_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: 3.4.5
+        bundler-cache: true
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
+
+    - name: Install dependencies
+      run: |
+        bundle install --jobs 4 --retry 3
+        npm ci
+
+    - name: Setup test database
+      env:
+        RAILS_ENV: test
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_rails_71_app_test
+        REDIS_URL: redis://localhost:6379/0
+      run: |
+        bin/rails db:prepare
+
+    - name: Run tests
+      env:
+        RAILS_ENV: test
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_rails_71_app_test
+        REDIS_URL: redis://localhost:6379/0
+      run: |
+        bin/rails test
+        bin/rails test:system
+
+    - name: Run security audit
+      run: |
+        bundle exec bundler-audit --update
+        npm audit --audit-level high
+
+  # Build and Deploy job (only for main branch)
+  deploy:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: 3.4.5
+        bundler-cache: true
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Set up Azure CLI
+      run: |
+        az --version
+        az account show
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+
+    - name: Set up Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: 'latest'
+
+    - name: Create Azure resources if they don't exist
+      run: |
+        # Create resource group
+        az group create --name $RESOURCE_GROUP --location "$LOCATION" || true
+        
+        # Create ACR if it doesn't exist
+        if ! az acr show --name $ACR_NAME --resource-group $RESOURCE_GROUP >/dev/null 2>&1; then
+          echo "Creating ACR: $ACR_NAME"
+          az acr create \
+            --resource-group $RESOURCE_GROUP \
+            --name $ACR_NAME \
+            --sku Standard \
+            --admin-enabled true
+        fi
+        
+        # Create AKS cluster if it doesn't exist
+        if ! az aks show --resource-group $RESOURCE_GROUP --name $CLUSTER_NAME >/dev/null 2>&1; then
+          echo "Creating AKS cluster: $CLUSTER_NAME (this may take 10-15 minutes)"
+          az aks create \
+            --resource-group $RESOURCE_GROUP \
+            --name $CLUSTER_NAME \
+            --node-count 3 \
+            --node-vm-size Standard_D2s_v3 \
+            --enable-addons monitoring \
+            --attach-acr $ACR_NAME \
+            --generate-ssh-keys \
+            --enable-cluster-autoscaler \
+            --min-count 2 \
+            --max-count 10
+        else
+          echo "AKS cluster already exists: $CLUSTER_NAME"
+        fi
+
+    - name: Get AKS credentials
+      run: |
+        az aks get-credentials --resource-group $RESOURCE_GROUP --name $CLUSTER_NAME --overwrite-existing
+
+    - name: Login to ACR
+      run: |
+        az acr login --name $ACR_NAME
+
+    - name: Build and push Docker image
+      run: |
+        ACR_LOGIN_SERVER=$(az acr show --name $ACR_NAME --resource-group $RESOURCE_GROUP --query loginServer --output tsv)
+        echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> $GITHUB_ENV
+        
+        # Build and push image
+        docker build -f Dockerfile.production -t ${ACR_LOGIN_SERVER}/rails-app:${IMAGE_TAG} .
+        docker push ${ACR_LOGIN_SERVER}/rails-app:${IMAGE_TAG}
+        
+        # Also tag as latest
+        docker tag ${ACR_LOGIN_SERVER}/rails-app:${IMAGE_TAG} ${ACR_LOGIN_SERVER}/rails-app:latest
+        docker push ${ACR_LOGIN_SERVER}/rails-app:latest
+
+    - name: Set up NGINX Ingress Controller
+      run: |
+        # Check if ingress-nginx namespace exists
+        if ! kubectl get namespace ingress-nginx >/dev/null 2>&1; then
+          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+          helm repo update
+          
+          helm install ingress-nginx ingress-nginx/ingress-nginx \
+            --namespace ingress-nginx \
+            --create-namespace \
+            --set controller.replicaCount=2 \
+            --set controller.nodeSelector."kubernetes\.io/os"=linux \
+            --set defaultBackend.nodeSelector."kubernetes\.io/os"=linux \
+            --set controller.service.type=LoadBalancer
+          
+          # Wait for ingress controller to be ready
+          kubectl wait --namespace ingress-nginx \
+            --for=condition=ready pod \
+            --selector=app.kubernetes.io/component=controller \
+            --timeout=300s
+        fi
+
+    - name: Set up Cert-Manager
+      run: |
+        # Check if cert-manager namespace exists
+        if ! kubectl get namespace cert-manager >/dev/null 2>&1; then
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo update
+          
+          helm install cert-manager jetstack/cert-manager \
+            --namespace cert-manager \
+            --create-namespace \
+            --version v1.13.0 \
+            --set installCRDs=true
+          
+          # Wait for cert-manager to be ready
+          kubectl wait --namespace cert-manager \
+            --for=condition=Available \
+            deployment/cert-manager \
+            --timeout=300s
+        fi
+
+    - name: Create application secrets
+      run: |
+        # Create namespace
+        kubectl apply -f k8s/base/namespace.yaml
+        
+        # Create application secrets
+        kubectl create secret generic rails-app-secrets \
+          --namespace=rails-app \
+          --from-literal=SECRET_KEY_BASE="${{ secrets.SECRET_KEY_BASE }}" \
+          --from-literal=RAILS_MASTER_KEY="${{ secrets.RAILS_MASTER_KEY }}" \
+          --from-literal=POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+          --dry-run=client -o yaml | kubectl apply -f -
+        
+        # Create ACR secret
+        ACR_USERNAME=$(az acr credential show --name $ACR_NAME --resource-group $RESOURCE_GROUP --query username --output tsv)
+        ACR_PASSWORD=$(az acr credential show --name $ACR_NAME --resource-group $RESOURCE_GROUP --query passwords[0].value --output tsv)
+        
+        kubectl create secret docker-registry azure-container-registry \
+          --namespace=rails-app \
+          --docker-server="$ACR_LOGIN_SERVER" \
+          --docker-username="$ACR_USERNAME" \
+          --docker-password="$ACR_PASSWORD" \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+    - name: Update image references in manifests
+      run: |
+        # Update image references with the actual ACR server and commit SHA
+        sed -i "s|your-registry.azurecr.io/rails-app:latest|${ACR_LOGIN_SERVER}/rails-app:${IMAGE_TAG}|g" k8s/base/rails-app.yaml
+        
+        # Update ingress with actual domain if provided
+        if [ -n "${{ secrets.DOMAIN_NAME }}" ]; then
+          sed -i "s/your-domain.com/${{ secrets.DOMAIN_NAME }}/g" k8s/base/ingress.yaml
+        fi
+        
+        # Update email for Let's Encrypt if provided
+        if [ -n "${{ secrets.LETSENCRYPT_EMAIL }}" ]; then
+          sed -i "s/your-email@example.com/${{ secrets.LETSENCRYPT_EMAIL }}/g" k8s/base/ingress.yaml
+        fi
+
+    - name: Deploy to AKS
+      run: |
+        # Apply all Kubernetes manifests
+        kubectl apply -k k8s/base/
+        
+        # Wait for deployments to be ready
+        echo "Waiting for deployments to be ready..."
+        kubectl wait --for=condition=available --timeout=600s deployment/postgres -n rails-app || true
+        kubectl wait --for=condition=available --timeout=600s deployment/redis -n rails-app || true
+        kubectl wait --for=condition=available --timeout=600s deployment/elasticsearch -n rails-app || true
+        kubectl wait --for=condition=available --timeout=600s deployment/zookeeper -n rails-app || true
+        kubectl wait --for=condition=available --timeout=600s deployment/kafka -n rails-app || true
+        kubectl wait --for=condition=available --timeout=600s deployment/rails-web -n rails-app || true
+        kubectl wait --for=condition=available --timeout=600s deployment/sidekiq -n rails-app || true
+
+    - name: Run database migrations
+      run: |
+        # Wait a bit more for the database to be fully ready
+        sleep 30
+        
+        # Run database migrations
+        kubectl exec -n rails-app deployment/rails-web -- bin/rails db:migrate || \
+        kubectl run rails-migrate-${{ github.run_number }} \
+          --namespace=rails-app \
+          --image=${ACR_LOGIN_SERVER}/rails-app:${IMAGE_TAG} \
+          --restart=Never \
+          --command -- bin/rails db:migrate \
+          --rm -i --wait
+
+    - name: Verify deployment
+      run: |
+        # Check deployment status
+        kubectl get all -n rails-app
+        
+        # Check ingress
+        kubectl get ingress -n rails-app
+        
+        # Get external IP
+        echo "Waiting for LoadBalancer IP..."
+        timeout=300
+        elapsed=0
+        
+        while [ $elapsed -lt $timeout ]; do
+          EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+          
+          if [ -n "$EXTERNAL_IP" ]; then
+            echo "::notice::Application is available at: http://$EXTERNAL_IP"
+            break
+          fi
+          
+          echo "Waiting for LoadBalancer IP... ($elapsed/$timeout seconds)"
+          sleep 10
+          elapsed=$((elapsed + 10))
+        done
+
+    - name: Health check
+      run: |
+        # Wait for the application to be responsive
+        sleep 60
+        
+        # Check if any pods are in error state
+        kubectl get pods -n rails-app --field-selector=status.phase!=Running,status.phase!=Succeeded
+        
+        # Show pod status
+        kubectl get pods -n rails-app
+
+    - name: Notification
+      if: always()
+      run: |
+        if [ "${{ job.status }}" == "success" ]; then
+          echo "::notice::✅ Deployment to AKS completed successfully!"
+          echo "::notice::🚀 Commit ${{ github.sha }} deployed to production"
+        else
+          echo "::error::❌ Deployment to AKS failed!"
+          echo "::error::💥 Please check the logs and fix the issues"
+        fi
+
+  # Cleanup old images (runs after successful deploy)
+  cleanup:
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Cleanup old ACR images
+      run: |
+        # Keep only the last 10 images
+        az acr repository show-tags --name $ACR_NAME --repository rails-app --orderby time_desc --output table
+        
+        # Delete images older than 30 days (optional)
+        # az acr repository delete --name $ACR_NAME --image rails-app --yes --older-than 30d

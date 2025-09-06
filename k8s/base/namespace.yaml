@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rails-app
+  labels:
+    app: test-rails-71-app
+    environment: production
+    version: "1.0"
+  annotations:
+    description: "Rails 7.1.5 application with Elasticsearch, Kafka, Redis, and PostgreSQL"

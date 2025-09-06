@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rails-app-config
+  namespace: rails-app
+data:
+  RAILS_ENV: "production"
+  RAILS_SERVE_STATIC_FILES: "true"
+  RAILS_LOG_TO_STDOUT: "true"
+  RAILS_MAX_THREADS: "5"
+  POSTGRES_HOST: "postgres-service"
+  POSTGRES_USER: "postgres"
+  REDIS_URL: "redis://redis-service:6379/0"
+  ELASTICSEARCH_URL: "http://elasticsearch-service:9200"
+  KAFKA_BROKERS: "kafka-service:9092"
+  DATABASE_URL: "postgresql://postgres:$(POSTGRES_PASSWORD)@postgres-service:5432/test_rails_71_app_production"

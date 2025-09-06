@@ -1,0 +1,188 @@
+# Rails Web Application Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rails-web
+  namespace: rails-app
+  labels:
+    app: rails-web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rails-web
+  template:
+    metadata:
+      labels:
+        app: rails-web
+    spec:
+      imagePullSecrets:
+      - name: azure-container-registry
+      initContainers:
+      - name: db-migrate
+        image: your-registry.azurecr.io/rails-app:latest
+        command: ["bin/rails", "db:migrate"]
+        envFrom:
+        - configMapRef:
+            name: rails-app-config
+        - secretRef:
+            name: rails-app-secrets
+        volumeMounts:
+        - name: rails-storage
+          mountPath: /rails/storage
+      containers:
+      - name: rails-web
+        image: your-registry.azurecr.io/rails-app:latest
+        ports:
+        - containerPort: 3000
+        envFrom:
+        - configMapRef:
+            name: rails-app-config
+        - secretRef:
+            name: rails-app-secrets
+        volumeMounts:
+        - name: rails-storage
+          mountPath: /rails/storage
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /up
+            port: 3000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /up
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: rails-storage
+        persistentVolumeClaim:
+          claimName: rails-storage-pvc
+---
+# Rails Web Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: rails-web-service
+  namespace: rails-app
+spec:
+  selector:
+    app: rails-web
+  ports:
+  - port: 3000
+    targetPort: 3000
+  type: ClusterIP
+---
+# Sidekiq Worker Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sidekiq
+  namespace: rails-app
+  labels:
+    app: sidekiq
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: sidekiq
+  template:
+    metadata:
+      labels:
+        app: sidekiq
+    spec:
+      imagePullSecrets:
+      - name: azure-container-registry
+      containers:
+      - name: sidekiq
+        image: your-registry.azurecr.io/rails-app:latest
+        command: ["bundle", "exec", "sidekiq"]
+        envFrom:
+        - configMapRef:
+            name: rails-app-config
+        - secretRef:
+            name: rails-app-secrets
+        volumeMounts:
+        - name: rails-storage
+          mountPath: /rails/storage
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - pgrep
+            - sidekiq
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          exec:
+            command:
+            - pgrep
+            - sidekiq
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: rails-storage
+        persistentVolumeClaim:
+          claimName: rails-storage-pvc
+---
+# Horizontal Pod Autoscaler for Rails Web
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rails-web-hpa
+  namespace: rails-app
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: rails-web
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+---
+# Horizontal Pod Autoscaler for Sidekiq
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: sidekiq-hpa
+  namespace: rails-app
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: sidekiq
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
