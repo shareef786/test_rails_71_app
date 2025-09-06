@@ -47,18 +47,71 @@ check_dependencies() {
     log_success "All dependencies are installed"
 }
 
+register_azure_providers() {
+    log_info "Registering Azure resource providers..."
+    
+    # Register required resource providers
+    az provider register --namespace Microsoft.ContainerRegistry || true
+    az provider register --namespace Microsoft.ContainerService || true
+    az provider register --namespace Microsoft.Compute || true
+    az provider register --namespace Microsoft.Network || true
+    az provider register --namespace Microsoft.Storage || true
+    
+    log_info "Waiting for resource providers to be registered..."
+    
+    # Wait for registration to complete (with timeout)
+    local timeout=300
+    local elapsed=0
+    
+    while [ $elapsed -lt $timeout ]; do
+        acr_state=$(az provider show --namespace Microsoft.ContainerRegistry --query registrationState -o tsv 2>/dev/null || echo "Unknown")
+        aks_state=$(az provider show --namespace Microsoft.ContainerService --query registrationState -o tsv 2>/dev/null || echo "Unknown")
+        
+        if [ "$acr_state" = "Registered" ] && [ "$aks_state" = "Registered" ]; then
+            log_success "Required resource providers are registered"
+            return 0
+        fi
+        
+        log_info "Waiting for providers to register... ACR: $acr_state, AKS: $aks_state ($elapsed/$timeout seconds)"
+        sleep 10
+        elapsed=$((elapsed + 10))
+    done
+    
+    log_warning "Resource provider registration may still be in progress. Continuing..."
+}
+
 setup_azure_resources() {
     log_info "Setting up Azure resources..."
     
+    # Register providers first
+    register_azure_providers
+    
     # Create resource group
+    log_info "Creating resource group: $RESOURCE_GROUP"
     az group create --name $RESOURCE_GROUP --location "$LOCATION" || true
     
-    # Create ACR
-    az acr create \
-        --resource-group $RESOURCE_GROUP \
-        --name $ACR_NAME \
-        --sku Standard \
-        --admin-enabled true || true
+    # Wait a moment for resource group to be fully created
+    sleep 5
+    
+    # Create ACR if it doesn't exist
+    if ! az acr show --name $ACR_NAME --resource-group $RESOURCE_GROUP >/dev/null 2>&1; then
+        log_info "Creating Azure Container Registry: $ACR_NAME"
+        az acr create \
+            --resource-group $RESOURCE_GROUP \
+            --name $ACR_NAME \
+            --sku Standard \
+            --admin-enabled true
+        
+        # Wait for ACR to be fully provisioned
+        log_info "Waiting for ACR to be fully provisioned..."
+        while [ "$(az acr show --name $ACR_NAME --resource-group $RESOURCE_GROUP --query provisioningState -o tsv)" != "Succeeded" ]; do
+            log_info "Waiting for ACR provisioning to complete..."
+            sleep 10
+        done
+        log_success "ACR provisioning completed successfully"
+    else
+        log_info "ACR already exists: $ACR_NAME"
+    fi
     
     # Create AKS cluster
     if ! az aks show --resource-group $RESOURCE_GROUP --name $CLUSTER_NAME >/dev/null 2>&1; then

@@ -2,76 +2,33 @@
 
 This file provides guidance to WARP (warp.dev) when working with code in this repository.
 
-## Architecture Overview
+## Application Overview
 
-This is a Rails 7.1.5 application built with Ruby 3.4.5. The application demonstrates a modern Rails stack with integrated search capabilities and background job processing.
+This is a Ruby on Rails 7.1.5 application built with Ruby 3.4.5 that demonstrates a production-ready microservices architecture. The application includes:
 
-### Key Components
+- **Core Framework**: Rails 7.1.5 with modern features (Hotwire, Turbo, Stimulus)
+- **Database**: PostgreSQL with Active Record
+- **Background Jobs**: Sidekiq with Redis
+- **Search**: Elasticsearch integration (currently mocked for testing)
+- **Message Streaming**: Kafka with Zookeeper (currently mocked for testing)
+- **Frontend**: Import maps with Stimulus controllers
+- **Testing**: Minitest with system tests using Capybara and Selenium
 
-- **Database**: PostgreSQL with environment-configurable connection settings
-- **Search**: Elasticsearch integration via `elasticsearch-model` gem for the Book model
-- **Background Jobs**: Sidekiq for background job processing with Redis
-- **Message Streaming**: Kafka integration using `ruby-kafka` gem
-- **Frontend**: Traditional Rails views with Hotwire (Turbo + Stimulus) for interactivity
-- **Assets**: Importmap for JavaScript modules, traditional asset pipeline via Sprockets
+## Common Development Commands
 
-### Application Structure
-
-The application centers around a `Book` resource with full CRUD operations:
-- **Models**: `Book` model with Elasticsearch integration for search functionality
-- **Controllers**: Standard Rails RESTful controllers with JSON API support
-- **Views**: ERB templates with Hotwire integration
-- **Routes**: RESTful routes for books, Sidekiq web UI mounted at `/sidekiq`, health check at `/up`
-
-## Development Commands
-
-### Setup and Installation
+### Local Development
 ```bash
-# Initial setup (installs dependencies, prepares database, clears logs)
-bin/setup
-
-# Install/update dependencies only
+# Install dependencies
 bundle install
-```
 
-### Database Operations
-```bash
-# Create databases
-bin/rails db:create
+# Setup database (first time)
+bin/rails db:create db:migrate db:seed
 
-# Run migrations
-bin/rails db:migrate
-
-# Prepare database (setup if new, migrate if existing)
-bin/rails db:prepare
-
-# Reset database (drop, create, migrate, seed)
-bin/rails db:reset
-
-# Load seed data
-bin/rails db:seed
-
-# Check migration status
-bin/rails db:migrate:status
-```
-
-### Running the Application
-```bash
-# Start Rails server (development)
+# Run the development server
 bin/rails server
+# OR use foreman for all services
+foreman start
 
-# Start with specific port
-bin/rails server -p 4000
-
-# Start Rails console
-bin/rails console
-
-# Background jobs (Sidekiq) - run in separate terminal
-bundle exec sidekiq
-```
-
-### Testing
-```bash
 # Run all tests
 bin/rails test
 
@@ -81,88 +38,302 @@ bin/rails test test/models/book_test.rb
 # Run system tests
 bin/rails test:system
 
-# Reset test database and run tests
-bin/rails test:db
-```
+# Run security audit
+bundle exec bundler-audit --update
 
-### Asset Management
-```bash
-# Precompile assets for production
-bin/rails assets:precompile
+# Rails console
+bin/rails console
 
-# Clean old compiled assets
-bin/rails assets:clean
+# Database console
+bin/rails dbconsole
 
-# Remove all compiled assets
-bin/rails assets:clobber
-```
+# Run migrations
+bin/rails db:migrate
 
-### Development Utilities
-```bash
+# Rollback migrations
+bin/rails db:rollback
+
+# Reset database (destructive)
+bin/rails db:reset
+
+# View routes
+bin/rails routes
+
 # Generate new migration
-bin/rails generate migration MigrationName
+bin/rails generate migration CreateNewModel field:type
 
-# Generate new controller
-bin/rails generate controller ControllerName
+# Generate controller
+bin/rails generate controller ControllerName action1 action2
 
-# Generate scaffold
-bin/rails generate scaffold ModelName field:type
-
-# Clear logs
-bin/rails log:clear
-
-# Clear tmp files
-bin/rails tmp:clear
-
-# Check code statistics
-bin/rails stats
-
-# Check Zeitwerk loading compatibility
-bin/rails zeitwerk:check
+# Generate model
+bin/rails generate model ModelName field:type
 ```
 
-## Docker Usage
-
-The application includes Docker support:
+### Background Jobs (Sidekiq)
 ```bash
-# Build Docker image
-docker build -t test-rails-app .
+# Start Sidekiq worker
+bundle exec sidekiq
 
-# Run with Docker (requires environment variables for database, Redis, etc.)
-docker run -p 3000:3000 test-rails-app
+# Access Sidekiq web interface (available at /sidekiq when app is running)
+# Visit http://localhost:3000/sidekiq
 ```
 
-## External Dependencies
+### Linting and Code Quality
+```bash
+# Security audit
+bundle exec bundler-audit --update
 
-### Required Services
-- **PostgreSQL**: Database server
-- **Redis**: Required for Sidekiq background jobs
-- **Elasticsearch**: Required for Book model search functionality
+# Check for outdated gems
+bundle outdated
+```
 
-### Environment Variables
-The application expects these environment variables for external service connections:
-- `POSTGRES_USER` (defaults to "postgres")
-- `POSTGRES_PASSWORD` (defaults to empty)
-- `POSTGRES_HOST` (defaults to "localhost")
-- `RAILS_MAX_THREADS` (defaults to 5, used for database pool size)
+## Production Deployment
 
-## Code Organization
+### Docker Compose (Recommended for production)
+```bash
+# Deploy to production
+./deploy.sh deploy
 
-### Models
-- `ApplicationRecord`: Base class for all models
-- `Book`: Main domain model with Elasticsearch integration for search capabilities
+# Check status
+./deploy.sh status
 
-### Controllers
-- `ApplicationController`: Base controller with common functionality
-- `BooksController`: RESTful controller supporting both HTML and JSON responses
+# View logs
+./deploy.sh logs
+
+# Create database backup
+./deploy.sh backup
+
+# Health checks
+./deploy.sh health
+
+# Stop services
+./deploy.sh stop
+
+# Restart services
+./deploy.sh restart
+
+# Cleanup old images
+./deploy.sh cleanup
+```
+
+### Azure Kubernetes Service (AKS)
+```bash
+# Deploy to AKS
+./deploy-aks.sh deploy
+
+# Check application status
+./deploy-aks.sh status
+
+# View logs
+./deploy-aks.sh logs rails-web
+
+# Get ingress IP
+./deploy-aks.sh ip
+
+# Cleanup resources
+./deploy-aks.sh cleanup
+```
+
+## Architecture and Code Organization
+
+### Multi-Service Architecture
+The application is designed as a distributed system with these services:
+
+1. **Rails Web Application** (`app/`):
+   - Controllers handle HTTP requests
+   - Models manage data and business logic
+   - Services encapsulate complex operations
+   - Jobs handle background processing
+
+2. **Background Processing** (Sidekiq):
+   - Jobs are processed asynchronously
+   - Redis stores job queues and session data
+
+3. **Data Layer**:
+   - PostgreSQL for persistent data
+   - Redis for caching and session storage
+   - Elasticsearch for search (integration ready)
+
+4. **Message Streaming** (Kafka):
+   - Producer/Consumer services for event streaming
+   - Currently mocked but production-ready configuration exists
+
+### Service Layer Pattern
+Business logic is organized in service objects:
+- `app/services/kafka_producer_service.rb` - Handles message publishing
+- `app/services/kafka_consumer_service.rb` - Processes incoming messages
+
+These services use a mock implementation during testing/development but have production Kafka integration ready to be enabled.
+
+### Configuration Management
+- Environment-specific configs in `config/environments/`
+- Service initializers in `config/initializers/`
+- Kafka client configured with fallback to mock for testing (`config/initializers/kafka.rb`)
+- Database configuration supports multiple environments (`config/database.yml`)
+
+### Containerization Strategy
+**Development Container** (`Dockerfile`):
+- Optimized for development with debugging tools
+- Uses Ruby 3.4.5 slim base image
+
+**Production Container** (`Dockerfile.production`):
+- Multi-stage build for smaller image size
+- Security-hardened with non-root user
+- Optimized asset compilation
+
+### Kubernetes Architecture
+The K8s deployment (`k8s/base/`) includes:
+- Horizontal Pod Autoscaler for web and worker pods
+- Persistent volumes for data services
+- ConfigMaps and Secrets for configuration
+- Health checks and liveness probes
+- Network policies for security
+
+### Testing Strategy
+- **Unit Tests**: Models and services (`test/models/`, `test/services/`)
+- **Controller Tests**: HTTP endpoint testing (`test/controllers/`)
+- **System Tests**: End-to-end browser testing (`test/system/`)
+- **Parallel Testing**: Enabled by default (disabled in CI)
+- **Service Mocking**: External services (Kafka, Elasticsearch) are mocked in test environment
+
+## Development Workflow
+
+### Local Development Setup
+1. Ensure PostgreSQL and Redis are running locally
+2. Copy environment files: `cp .env.production.example .env.development`
+3. Install dependencies: `bundle install`
+4. Setup database: `bin/rails db:setup`
+5. Start services: `foreman start` or `bin/rails server`
+
+### External Service Integration
+**Kafka Integration**:
+- Production configuration ready in `config/initializers/kafka.rb`
+- Service classes handle graceful fallback to mock implementations
+- Environment variable `KAFKA_BROKERS` configures connection
+
+**Elasticsearch Integration**:
+- Model integration ready in `app/models/book.rb`
+- Commented out for testing but production-ready
+- Environment variable `ELASTICSEARCH_URL` configures connection
+
+### Database Patterns
+- Uses standard Active Record migrations
+- Single model example: `Book` with title, author, published_on
+- Migration versioned with Rails 7.1 conventions
+- Database seeding available in `db/seeds.rb`
+
+### Deployment Patterns
+**Docker Compose Production**:
+- Full stack with all services
+- Nginx reverse proxy for SSL termination
+- Health checks for all services
+- Persistent volumes for data
+- Automated backups
+
+**Kubernetes Deployment**:
+- Microservices architecture
+- Auto-scaling based on CPU/memory
+- Azure-specific optimizations (ACR, AKS)
+- GitOps-ready with GitHub Actions
+- SSL certificates via Let's Encrypt
+
+## Important Files and Directories
+
+### Core Application
+- `app/models/book.rb` - Example model with Elasticsearch integration ready
+- `app/controllers/books_controller.rb` - RESTful controller example
+- `app/services/` - Service objects for external integrations
+- `config/routes.rb` - Application routing with Sidekiq web interface
 
 ### Configuration
-- Database configuration is environment-aware with sensible defaults
-- Elasticsearch settings are configured directly in the Book model
-- Sidekiq web interface is mounted and accessible in development
+- `config/initializers/kafka.rb` - Kafka client with fallback mechanism
+- `config/initializers/elasticsearch.rb` - Elasticsearch configuration
+- `config/initializers/sidekiq.rb` - Background job configuration
 
-## Testing Strategy
+### Deployment
+- `deploy.sh` - Production Docker deployment automation
+- `deploy-aks.sh` - Azure Kubernetes Service deployment
+- `docker-compose.production.yml` - Full production stack definition
+- `k8s/base/` - Kubernetes manifests for all services
 
-- Uses Rails' built-in test framework with parallel test execution enabled
-- Includes unit tests (`test/models/`), controller tests (`test/controllers/`), and system tests (`test/system/`)
-- Test database is automatically prepared when running tests
+### CI/CD
+- `.github/workflows/deploy-aks.yml` - Automated AKS deployment pipeline
+- `Dockerfile` vs `Dockerfile.production` - Environment-specific optimizations
+
+## Environment-Specific Notes
+
+### Development
+- External services (Kafka, Elasticsearch) use mock implementations
+- Parallel testing enabled for faster test suite execution
+- Foreman process manager coordinates multiple services
+
+### Test
+- Services always use mock implementations
+- Parallel testing disabled in CI environments
+- Comprehensive test coverage for controllers, models, and system interactions
+
+### Production
+- All services run in containers with health checks
+- Automatic scaling based on demand (K8s HPA)
+- SSL termination and security headers
+- Monitoring and logging integration ready
+- Backup automation for critical data
+
+The application demonstrates modern Rails best practices while maintaining production readiness across multiple deployment environments.
+
+## Troubleshooting
+
+### Azure Deployment Issues
+
+**Azure Container Registry Registration Error**:
+```
+ERROR: (MissingSubscriptionRegistration) The subscription is not registered to use namespace 'Microsoft.ContainerRegistry'
+```
+
+This error occurs when your Azure subscription hasn't registered the required resource providers. To fix this:
+
+```bash
+# Check subscription health and fix issues automatically
+./scripts/check-azure-subscription.sh --fix
+
+# Or register providers manually
+az provider register --namespace Microsoft.ContainerRegistry
+az provider register --namespace Microsoft.ContainerService
+az provider register --namespace Microsoft.Compute
+az provider register --namespace Microsoft.Network
+az provider register --namespace Microsoft.Storage
+```
+
+**Check Azure Subscription Status**:
+```bash
+# Run health check
+./scripts/check-azure-subscription.sh
+
+# Check specific provider registration
+az provider show --namespace Microsoft.ContainerRegistry --query registrationState
+```
+
+### Common Development Issues
+
+**External Services Not Available**:
+- Kafka and Elasticsearch use mock implementations in development/test
+- Check `config/initializers/kafka.rb` for fallback behavior
+- Uncomment production code when deploying to production environments
+
+**Database Connection Issues**:
+```bash
+# Check if PostgreSQL is running
+pg_isready -h localhost -p 5432
+
+# Reset database if needed
+bin/rails db:reset
+```
+
+**Sidekiq Jobs Not Processing**:
+```bash
+# Check Redis connection
+redis-cli ping
+
+# Restart Sidekiq worker
+bundle exec sidekiq
+```
