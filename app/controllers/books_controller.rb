@@ -25,8 +25,9 @@ class BooksController < ApplicationController
 
     respond_to do |format|
       if @book.save
+        # TEMPORARILY COMMENTED OUT FOR TESTING
         # Example: Publish a message to Kafka when a book is created
-        KafkaProducerService.publish('books', "Book created: \\#{@book.title} by \\#{@book.author}")
+        # KafkaProducerService.publish('books', "Book created: \\#{@book.title} by \\#{@book.author}")
 
         format.html { redirect_to @book, notice: "Book was successfully created." }
         format.json { render :show, status: :created, location: @book }

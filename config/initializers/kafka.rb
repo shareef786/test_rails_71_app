@@ -1,59 +1,78 @@
 # config/initializers/kafka.rb
+# TEMPORARILY COMMENTED OUT FOR TESTING
 
-require 'kafka'
+# require 'kafka'
 
-# Kafka client wrapper that handles connection failures gracefully
-class KafkaClientWrapper
-  def initialize
-    @real_client = nil
-    @is_mock = false
-    initialize_client
-  end
+# # Kafka client wrapper that handles connection failures gracefully
+# class KafkaClientWrapper
+#   def initialize
+#     @real_client = nil
+#     @is_mock = false
+#     initialize_client
+#   end
 
-  def deliver_message(message, topic:)
-    if @is_mock
-      Rails.logger.debug "Mock Kafka: would deliver '#{message}' to topic '#{topic}'"
-    else
-      @real_client.deliver_message(message, topic: topic)
-    end
-  end
+#   def deliver_message(message, topic:)
+#     if @is_mock
+#       Rails.logger.debug "Mock Kafka: would deliver '#{message}' to topic '#{topic}'"
+#     else
+#       @real_client.deliver_message(message, topic: topic)
+#     end
+#   end
 
-  def fetch_cluster_info
-    return {} if @is_mock
-    @real_client.fetch_cluster_info
-  end
+#   def fetch_cluster_info
+#     return {} if @is_mock
+#     @real_client.fetch_cluster_info
+#   end
 
-  private
+#   private
 
-  def initialize_client
-    if Rails.env.test?
-      # Always use mock client in test environment
-      @is_mock = true
-      Rails.logger.info "Using mock Kafka client in test environment"
-      return
-    end
+#   def initialize_client
+#     if Rails.env.test?
+#       # Always use mock client in test environment
+#       @is_mock = true
+#       Rails.logger.info "Using mock Kafka client in test environment"
+#       return
+#     end
 
-    begin
-      @real_client = Kafka.new(
-        seed_brokers: [ENV.fetch('KAFKA_BROKERS', 'localhost:9092')],
-        client_id: 'myapp',
-        connect_timeout: 1,
-        socket_timeout: 1
-      )
+#     begin
+#       @real_client = Kafka.new(
+#         seed_brokers: [ENV.fetch('KAFKA_BROKERS', 'localhost:9092')],
+#         client_id: 'myapp',
+#         connect_timeout: 1,
+#         socket_timeout: 1
+#       )
       
-      # Test connection
-      @real_client.fetch_cluster_info
-      Rails.logger.info "Successfully connected to Kafka"
-    rescue => e
-      Rails.logger.warn "Kafka not available, using mock client: #{e.message}"
-      @is_mock = true
-      @real_client = nil
-    end
-  end
-end
+#       # Test connection
+#       @real_client.fetch_cluster_info
+#       Rails.logger.info "Successfully connected to Kafka"
+#     rescue => e
+#       Rails.logger.warn "Kafka not available, using mock client: #{e.message}"
+#       @is_mock = true
+#       @real_client = nil
+#     end
+#   end
+# end
 
-# Initialize the global Kafka client
-$kafka = KafkaClientWrapper.new
+# # Initialize the global Kafka client
+# $kafka = KafkaClientWrapper.new
+
+# Mock Kafka client for temporary testing
+$kafka = Class.new do
+  def deliver_message(message, topic:)
+    Rails.logger.debug "Mock Kafka: would deliver '#{message}' to topic '#{topic}'"
+  end
+  
+  def consumer(group_id:)
+    Class.new do
+      def subscribe(topic); end
+      def each_message; end
+    end.new
+  end
+  
+  def fetch_cluster_info
+    {}
+  end
+end.new
 
 # Example method to produce a message
 def produce_kafka_message(topic, message)
