@@ -119,9 +119,9 @@ setup_azure_resources() {
         az aks create \
             --resource-group $RESOURCE_GROUP \
             --name $CLUSTER_NAME \
-            --node-count 3 \
-            --node-vm-size Standard_D2s_v3 \
-            --enable-addons monitoring,http_application_routing \
+            --node-count 2 \
+            --node-vm-size Standard_B2s \
+            --enable-addons monitoring \
             --attach-acr $ACR_NAME \
             --generate-ssh-keys
     else

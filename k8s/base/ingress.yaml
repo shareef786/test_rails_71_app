@@ -5,51 +5,15 @@ metadata:
   name: rails-app-ingress
   namespace: rails-app
   annotations:
-    kubernetes.io/ingress.class: nginx
-    nginx.ingress.kubernetes.io/rewrite-target: /
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
-    nginx.ingress.kubernetes.io/rate-limit-connections: "10"
-    nginx.ingress.kubernetes.io/rate-limit-requests-per-minute: "60"
-    # Security headers
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      more_set_headers "X-Frame-Options: DENY";
-      more_set_headers "X-Content-Type-Options: nosniff";
-      more_set_headers "X-XSS-Protection: 1; mode=block";
-      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
-      more_set_headers "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; media-src 'self'; object-src 'none'; child-src 'none'; form-action 'self'; base-uri 'self'; frame-ancestors 'none';";
-    # Static asset caching
-    nginx.ingress.kubernetes.io/server-snippet: |
-      location ~* ^/(assets|packs)/ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-        add_header Vary Accept-Encoding;
-        access_log off;
-      }
-    # Certificate management (Let's Encrypt)
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
-  tls:
-  - hosts:
-    - your-domain.com
-    - www.your-domain.com
-    secretName: rails-app-tls
+  ingressClassName: nginx
   rules:
-  - host: your-domain.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: rails-web-service
-            port:
-              number: 3000
-  - host: www.your-domain.com
-    http:
+  - http:
       paths:
       - path: /
         pathType: Prefix

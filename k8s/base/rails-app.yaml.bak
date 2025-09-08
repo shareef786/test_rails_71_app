@@ -45,23 +45,21 @@ spec:
           mountPath: /rails/storage
         resources:
           requests:
-            memory: "256Mi"
-            cpu: "200m"
-          limits:
             memory: "512Mi"
             cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
         livenessProbe:
           httpGet:
             path: /up
             port: 3000
-            scheme: HTTP
           initialDelaySeconds: 60
           periodSeconds: 30
         readinessProbe:
           httpGet:
             path: /up
             port: 3000
-            scheme: HTTP
           initialDelaySeconds: 30
           periodSeconds: 10
       volumes:
@@ -117,11 +115,11 @@ spec:
           mountPath: /rails/storage
         resources:
           requests:
-            memory: "128Mi"
-            cpu: "100m"
-          limits:
             memory: "256Mi"
-            cpu: "200m"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
         livenessProbe:
           exec:
             command:
